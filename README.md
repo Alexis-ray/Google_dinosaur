@@ -1,114 +1,114 @@
 # Google Dinosaur
 
-A lightweight, browser-based recreation of the Chrome offline Dino game built with native Canvas and plain JavaScript.
+一个使用原生 Canvas 和纯 JavaScript 实现的 Chrome 离线小恐龙游戏复刻版。
 
-This project focuses on the feel of `chrome://dino` without adding a framework, build step, or extra UI. The game runs from a single HTML page, uses one sprite atlas, stores the high score locally, and supports both keyboard and touch input.
+这个项目尽量贴近 `chrome://dino` 的视觉和游玩感受，同时保持实现足够轻量：没有框架、没有打包步骤、没有额外控制面板，直接打开页面即可开始游戏。项目使用单张精灵图驱动主要渲染，支持键盘和触控操作，并在浏览器本地保存最高分。
 
-## Features
+## 项目特性
 
-- Native Canvas rendering with no framework or bundler
-- Sprite-based Dino, obstacles, score digits, and game-over banner
-- Keyboard and touch controls for desktop and mobile play
-- Increasing game speed and obstacle variety as the score rises
-- Local high-score persistence via `localStorage`
-- Lightweight generated sound effects using the Web Audio API
-- Simple codebase that is easy to tune and extend
+- 基于原生 Canvas 2D 渲染，无框架、无打包器
+- 使用精灵图绘制恐龙、障碍物、分数字形和 Game Over 文案
+- 支持桌面键盘操作，也支持移动端触控操作
+- 分数提升后游戏速度逐步增加，障碍物类型会逐渐丰富
+- 通过 `localStorage` 持久化保存最高分
+- 使用 Web Audio API 生成轻量音效，无需额外音频资源
+- 代码结构简单，适合继续微调物理参数与渲染细节
 
-## Controls
+## 操作方式
 
-### Keyboard
+### 键盘
 
-- `Space`, `ArrowUp`, or `W`: jump / start / restart
-- `ArrowDown` or `S`: duck
+- `Space`、`ArrowUp` 或 `W`：跳跃 / 开始游戏 / 游戏结束后重新开始
+- `ArrowDown` 或 `S`：下蹲
 
-### Touch / Pointer
+### 触控 / 指针
 
-- Tap or click: jump / start / restart
-- On touch devices while running, press the lower part of the canvas: duck
-- Release touch or pointer: stop ducking / release jump
+- 点击或轻触画布：跳跃 / 开始游戏 / 游戏结束后重新开始
+- 在触控设备上，游戏运行时按住画布下方区域：下蹲
+- 松开触控或指针：结束下蹲 / 释放跳跃
 
-## Quick Start
+## 快速开始
 
-This is a static project. No install step is required.
+这是一个纯静态项目，不需要安装依赖。
 
-1. Clone or download the repository.
-2. Start a local static server from the project root.
-3. Open the served URL in a modern browser.
+1. 克隆或下载仓库。
+2. 在项目根目录启动一个本地静态文件服务器。
+3. 用现代浏览器打开对应地址。
 
-Example with Python:
+使用 Python 启动：
 
 ```bash
 python -m http.server 8000
 ```
 
-Then open:
+然后访问：
 
 ```text
 http://localhost:8000/
 ```
 
-Alternative with Node.js:
+如果你本机安装了 Node.js，也可以使用：
 
 ```bash
 npx serve .
 ```
 
-Directly opening `index.html` with `file://` may work in some browsers, but a local static server is the reliable way to run the game.
+虽然某些浏览器下直接用 `file://` 打开 `index.html` 也可能运行，但更稳妥的方式仍然是通过本地静态服务器启动。
 
-## Gameplay Notes
+## 游戏说明
 
-- The run starts when the player first jumps.
-- World speed increases over time with score progression.
-- Obstacles begin with cacti and later introduce birds.
-- High score is saved in the browser under the `dino-high-score` storage key.
-- Score and game-over rendering are drawn inside the canvas to match the minimalist Chrome Dino presentation.
+- 第一次起跳时游戏正式开始。
+- 随着分数增加，世界滚动速度会逐步提升。
+- 障碍物会先出现仙人掌，后续再逐步解锁飞鸟。
+- 最高分会以 `dino-high-score` 为键保存在浏览器本地。
+- 分数和 Game Over 都直接在 Canvas 内部绘制，以保持原版极简风格。
 
-## Project Structure
+## 项目结构
 
 ```text
 .
-├── index.html          # Page shell and script loading order
-├── styles.css          # Minimal page layout and canvas presentation
-├── offline-sprite.png  # Main sprite atlas used by the game
+├── index.html          # 页面骨架与脚本加载顺序
+├── styles.css          # 页面布局与画布展示样式
+├── offline-sprite.png  # 游戏主精灵图
 └── src
-    ├── audio.js        # Web Audio sound effect manager
-    ├── config.js       # Physics, sizing, sprites, themes, obstacle config
-    ├── game.js         # Core game loop, rendering, state, collision, scoring
-    ├── main.js         # Bootstrap, input binding, animation frame loop
-    └── storage.js      # High-score persistence wrapper
+    ├── audio.js        # Web Audio 音效管理
+    ├── config.js       # 物理参数、尺寸、主题、障碍物与精灵坐标配置
+    ├── game.js         # 核心玩法、渲染、状态机、碰撞、计分逻辑
+    ├── main.js         # 启动入口、输入绑定、动画主循环
+    └── storage.js      # 最高分本地存储封装
 ```
 
-## Customization
+## 自定义与调参
 
-If you want to tune the game feel or make it closer to the original Chrome Dino, start with `src/config.js`.
+如果你想继续把手感调得更像原版 Chrome Dino，建议优先查看 `src/config.js`。
 
-Useful areas to tweak include:
+最常见的调整点包括：
 
-- jump velocity and gravity
-- world speed and acceleration
-- obstacle spacing and unlock thresholds
-- sprite coordinates and visual theme colors
+- 跳跃初速度与重力参数
+- 世界初始速度、最高速度和加速度
+- 障碍物间距、生成节奏与解锁分数
+- 精灵坐标、主题颜色与少量渲染细节
 
-For gameplay or render behavior changes, `src/game.js` is the main implementation file.
+如果要改玩法逻辑或渲染表现，主要工作文件是 `src/game.js`。
 
-## Debugging
+## 调试
 
-At runtime, the game instance is exposed as:
+运行时，游戏实例会暴露到浏览器全局对象：
 
 ```js
 window.__dinoGameDebug
 ```
 
-This is useful for inspecting state in the browser console while tuning physics or validating behavior.
+这对在控制台里检查状态、调试物理参数和验证行为很有用。
 
-## Browser Support
+## 浏览器支持
 
-The game targets modern browsers with Canvas 2D, `localStorage`, Pointer Events, and Web Audio API support. Audio unlock behavior follows standard browser restrictions and activates after user interaction.
+项目面向支持 Canvas 2D、`localStorage`、Pointer Events 和 Web Audio API 的现代浏览器。音频解锁遵循浏览器常见限制，通常会在用户首次交互后启用。
 
-## Contributing
+## 贡献
 
-Issues and pull requests are welcome. If you plan to modify gameplay feel, try to keep changes aligned with the minimalist style and timing of the original offline Dino experience.
+欢迎提交 Issue 或 Pull Request。如果你计划修改玩法节奏或画面细节，建议尽量保持项目当前这种接近原版离线 Dino 的简洁风格。
 
-## License
+## 许可证
 
-No license file is included in this repository yet. If you plan to open-source this project broadly, adding a license is recommended.
+本项目基于 [MIT License](./LICENSE) 开源。

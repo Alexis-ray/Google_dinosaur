@@ -1,0 +1,48 @@
+:root {
+  --dino-bg: #ffffff;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  min-height: 100vh;
+  overflow: hidden;
+  background: var(--dino-bg);
+  color: #535353;
+  font-family: "Courier New", Courier, monospace;
+}
+
+#app {
+  width: 100%;
+  padding-top: 150px;
+}
+
+#game-container {
+  position: relative;
+  width: min(100%, 600px);
+  margin: 0 auto;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+}
+
+#game-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 600 / 150;
+}
+
+@media (max-width: 720px) {
+  #app {
+    padding-top: 96px;
+  }
+}

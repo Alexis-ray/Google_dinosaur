@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>chrome://dino</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+    <div id="game-container">
+      <img id="offline-sprite" src="offline-sprite.png" alt="" hidden>
+
+      <canvas id="game-canvas" width="600" height="150"></canvas>
+    </div>
+  </div>
+
+  <script src="src/config.js" defer></script>
+  <script src="src/storage.js" defer></script>
+  <script src="src/audio.js" defer></script>
+  <script src="src/game.js" defer></script>
+  <script src="src/main.js" defer></script>
+</body>
+</html>

@@ -1,22 +1,26 @@
-# OS / editor
+# 系统与编辑器文件
 .DS_Store
 Thumbs.db
 Desktop.ini
 
-# Logs
+# 日志文件
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Local automation / browser artifacts
-.playwright-mcp/
-test-results/
-
-# OpenCode / session artifacts
-.sisyphus/
-
-# Optional local env files
+# 本地环境变量
 .env
 .env.*
+
+# 本地测试与自动化产物
+test-results/
+.playwright-mcp/
+
+# OpenCode / 会话临时文件
+.omo/
+.sisyphus/
+
+# 本地参考源码，不参与项目运行与提交
+chromium-dino-source/

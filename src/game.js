@@ -4,8 +4,9 @@ const {
   CANVAS_HEIGHT,
   DEBUG_FONT_SIZE,
   SCORE_DIGITS,
-  SCORE_PER_SECOND,
   SCORE_SOUND_MILESTONE,
+  SCORE_FLASH_DURATION,
+  SCORE_FLASH_ITERATIONS,
   STATUS_MESSAGE_DURATION,
   STATE_IDLE,
   STATE_RUNNING,
@@ -19,26 +20,40 @@ const {
   DINO_WIDTH,
   DINO_HEIGHT,
   DINO_DUCK_HEIGHT,
+  DINO_DUCK_DRAW_OFFSET_X,
   DINO_RUN_FRAME_DURATION,
   DINO_DUCK_FRAME_DURATION,
+  DINO_IDLE_BLINK_DURATION,
+  DINO_IDLE_BLINK_INTERVAL_MIN,
+  DINO_IDLE_BLINK_INTERVAL_MAX,
   GRAVITY,
   JUMP_VELOCITY,
   FAST_FALL_GRAVITY_MULTIPLIER,
   JUMP_RELEASE_GRAVITY_MULTIPLIER,
   GROUND_Y,
+  GAMEOVER_RESTART_DELAY,
+  INVERT_FADE_DURATION,
+  INVERT_DISTANCE,
+  INTRO_DURATION,
+  INTRO_RUNNER_OFFSET,
+  COLLISION_BOX_TRIM,
+  WORLD_FRAME_RATE,
+  WORLD_START_SPEED_FRAMES,
+  WORLD_MAX_SPEED_FRAMES,
+  WORLD_ACCELERATION_FRAMES,
   WORLD_START_SPEED,
   WORLD_MAX_SPEED,
-  WORLD_ACCELERATION_PER_SCORE,
+  DISTANCE_SCORE_COEFFICIENT,
   GROUND_PATTERN_WIDTH,
   GROUND_PATTERN_HEIGHT,
   GROUND_PATTERN_GAP,
   GROUND_PATTERN_OFFSET_Y,
   PLAYER_HITBOX,
   OBSTACLE_SPAWN_OFFSET_X,
-  OBSTACLE_INITIAL_SPAWN_DISTANCE,
-  OBSTACLE_MIN_GAP,
-  OBSTACLE_MAX_GAP,
-  OBSTACLE_GAP_SPEED_REDUCTION,
+  OBSTACLE_CLEAR_TIME,
+  OBSTACLE_GAP_COEFFICIENT,
+  OBSTACLE_MAX_GAP_COEFFICIENT,
+  OBSTACLE_MAX_DUPLICATION,
   OBSTACLE_DEFINITIONS,
   THEMES,
   SPRITE_CLOUD_X,
@@ -71,6 +86,7 @@ const {
   TREX_RUN_2_X,
   TREX_IDLE_X,
   TREX_JUMP_X,
+  TREX_CRASHED_X,
   TREX_DUCK_1_X,
   TREX_DUCK_2_X,
   TREX_DUCK_FRAME_WIDTH,
@@ -83,11 +99,15 @@ const {
   SPRITE_GAME_OVER_Y,
   SPRITE_GAME_OVER_WIDTH,
   SPRITE_GAME_OVER_HEIGHT,
+  SPRITE_GAME_OVER_DRAW_Y,
+  SPRITE_RESTART_X,
+  SPRITE_RESTART_Y,
+  SPRITE_RESTART_WIDTH,
+  SPRITE_RESTART_HEIGHT,
+  SPRITE_RESTART_DRAW_Y,
 } = window.DinoConfig;
 
 const storageApi = window.DinoStorage;
-const SPRITE_TINT_CACHE_LIMIT = 96;
-
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
@@ -129,6 +149,24 @@ function randomBetween(min, max) {
   return min + Math.random() * (max - min);
 }
 
+function intersects(a, b) {
+  return (
+    a.x < b.x + b.width &&
+    a.x + a.width > b.x &&
+    a.y < b.y + b.height &&
+    a.y + a.height > b.y
+  );
+}
+
+function trimCollisionBox(box, trim) {
+  return {
+    x: box.x + trim,
+    y: box.y + trim,
+    width: Math.max(0, box.width - trim * 2),
+    height: Math.max(0, box.height - trim * 2),
+  };
+}
+
 class Game {
   constructor(canvas, ctx, domHooks) {
     this.canvas = canvas;
@@ -139,7 +177,6 @@ class Game {
     this.audio = typeof window.createDinoAudioManager === "function"
       ? window.createDinoAudioManager()
       : null;
-    this.spriteTintCache = new Map();
 
     this.width = CANVAS_WIDTH;
     this.height = CANVAS_HEIGHT;
@@ -152,6 +189,10 @@ class Game {
     this.lastScoreSoundScore = 0;
     this.statusMessage = "";
     this.statusTimer = 0;
+    this.gameOverTimer = 0;
+    this.nightMode = false;
+    this.isIntroPlaying = false;
+    this.introTimer = 0;
 
     this.background = this.createBackground();
     this.player = this.createPlayer();
@@ -193,6 +234,10 @@ class Game {
       isJumping: false,
       isDucking: false,
       jumpReleased: false,
+      idleFrame: 0,
+      waitingFrame: 0,
+      blinkTimer: 0,
+      nextBlinkDelay: randomBetween(DINO_IDLE_BLINK_INTERVAL_MIN, DINO_IDLE_BLINK_INTERVAL_MAX),
       runFrame: 0,
       duckFrame: 0,
       animationTime: 0,
@@ -201,16 +246,29 @@ class Game {
   }
 
   resetRunState() {
+    this.worldSpeedFrames = WORLD_START_SPEED_FRAMES;
     this.worldSpeed = WORLD_START_SPEED;
+    this.groundDistance = 0;
     this.groundOffset = 0;
     this.obstacles = [];
-    this.obstacleDistanceRemaining = OBSTACLE_INITIAL_SPAWN_DISTANCE;
+    this.obstacleHistory = [];
+    this.runningTime = 0;
+    this.distanceRan = 0;
     this.score = 0;
-    this.scoreAccumulator = 0;
     this.lastScoreSoundScore = 0;
+    this.scoreFlashActive = false;
+    this.scoreFlashTimer = 0;
+    this.scoreFlashIteration = 0;
+    this.lastInvertTriggerScore = 0;
+    this.invertTimer = 0;
+    this.gameOverTimer = 0;
+    this.nightMode = false;
+    this.isIntroPlaying = false;
+    this.introTimer = 0;
     this.player = this.createPlayer();
     this.background = this.createBackground();
     this.clearStatus();
+    this.syncContainerIntroState();
   }
 
   formatScore(score) {
@@ -264,10 +322,30 @@ class Game {
     this.player.state = PLAYER_RUNNING;
   }
 
+  canRestart({ immediate = false } = {}) {
+    if (this.state !== STATE_GAMEOVER) {
+      return false;
+    }
+
+    return immediate || this.gameOverTimer >= GAMEOVER_RESTART_DELAY;
+  }
+
+  handleRestartInput(options = {}) {
+    if (!this.canRestart(options)) {
+      return false;
+    }
+
+    this.restartGame();
+    return true;
+  }
+
   startRun() {
     if (this.state === STATE_IDLE) {
       this.state = STATE_RUNNING;
-      this.player.state = PLAYER_RUNNING;
+      this.player.state = PLAYER_IDLE;
+      this.isIntroPlaying = true;
+      this.introTimer = 0;
+      this.syncContainerIntroState();
     }
   }
 
@@ -303,8 +381,7 @@ class Game {
 
   handleJumpInput() {
     if (this.state === STATE_GAMEOVER) {
-      this.restartGame();
-      return true;
+      return false;
     }
 
     if (this.state === STATE_IDLE) {
@@ -312,7 +389,20 @@ class Game {
       return this.jump();
     }
 
+    if (this.isIntroPlaying) {
+      return false;
+    }
+
     return this.jump();
+  }
+
+  syncContainerIntroState() {
+    if (!this.dom || !this.dom.gameContainer) {
+      return;
+    }
+
+    this.dom.gameContainer.classList.toggle("intro", this.state === STATE_IDLE || this.isIntroPlaying);
+    this.dom.gameContainer.classList.toggle("intro-complete", this.state !== STATE_IDLE && !this.isIntroPlaying);
   }
 
   handleDuckStart() {
@@ -352,18 +442,24 @@ class Game {
   }
 
   getActiveTheme() {
+    const baseTheme = THEMES.day;
+
     return {
-      ...THEMES.day,
-      showNightDecor: false,
+      ...baseTheme,
+      showNightDecor: this.nightMode,
     };
   }
 
   applyThemeToDom() {
     const theme = this.getActiveTheme();
 
+    this.root.classList.add("offline");
+    this.root.classList.toggle("inverted", this.nightMode);
+    this.root.style.setProperty("--dino-bg", theme.skyColor);
     this.root.style.setProperty("--bg-color", theme.skyColor);
     this.root.style.setProperty("--game-bg", theme.skyColor);
     this.root.style.setProperty("--text-color", theme.textColor);
+    this.root.style.setProperty("--page-filter", "invert(1)");
     this.root.style.setProperty("--accent-color", theme.accentColor);
     this.root.style.setProperty("--hint-color", theme.hintColor);
     this.root.style.setProperty("--border-color", theme.borderColor);
@@ -372,6 +468,18 @@ class Game {
   }
 
   updateTheme() {
+    if (this.nightMode) {
+      this.invertTimer += this.lastDelta;
+      if (this.invertTimer >= INVERT_FADE_DURATION) {
+        this.nightMode = false;
+        this.invertTimer = 0;
+      }
+    } else if (this.score > 0 && this.score % INVERT_DISTANCE === 0 && this.score !== this.lastInvertTriggerScore) {
+      this.nightMode = true;
+      this.invertTimer = 0;
+      this.lastInvertTriggerScore = this.score;
+    }
+
     this.applyThemeToDom();
   }
 
@@ -386,9 +494,15 @@ class Game {
     }
   }
 
-  updateDifficulty() {
+  updateDifficulty(deltaTime) {
+    const elapsedFrames = deltaTime * WORLD_FRAME_RATE;
+    this.worldSpeedFrames = clamp(
+      this.worldSpeedFrames + WORLD_ACCELERATION_FRAMES * elapsedFrames,
+      WORLD_START_SPEED_FRAMES,
+      WORLD_MAX_SPEED_FRAMES
+    );
     this.worldSpeed = clamp(
-      WORLD_START_SPEED + this.score * WORLD_ACCELERATION_PER_SCORE,
+      this.worldSpeedFrames * WORLD_FRAME_RATE,
       WORLD_START_SPEED,
       WORLD_MAX_SPEED
     );
@@ -420,6 +534,14 @@ class Game {
   updatePlayer(deltaTime) {
     const player = this.player;
 
+    if (this.isIntroPlaying) {
+      this.introTimer = Math.min(INTRO_DURATION, this.introTimer + deltaTime);
+      if (this.introTimer >= INTRO_DURATION) {
+        this.isIntroPlaying = false;
+        this.syncContainerIntroState();
+      }
+    }
+
     if (!player.isOnGround) {
       if (player.jumpReleased && player.velocityY < 0) {
         player.gravity = GRAVITY * JUMP_RELEASE_GRAVITY_MULTIPLIER;
@@ -441,13 +563,35 @@ class Game {
           player.state = PLAYER_DUCKING;
         } else {
           this.setPlayerHeight(player.standingHeight);
-          player.state = this.state === STATE_RUNNING ? PLAYER_RUNNING : PLAYER_IDLE;
+          player.state = this.state === STATE_RUNNING && !this.isIntroPlaying ? PLAYER_RUNNING : PLAYER_IDLE;
         }
 
         return;
       }
 
       player.state = PLAYER_JUMPING;
+      return;
+    }
+
+    if (this.state === STATE_IDLE) {
+      player.blinkTimer += deltaTime;
+      player.animationTime += deltaTime;
+
+      if (player.idleFrame === 0 && player.blinkTimer >= player.nextBlinkDelay) {
+        player.idleFrame = 1;
+        player.waitingFrame = 1;
+        player.animationTime = 0;
+      } else if (player.idleFrame === 1 && player.animationTime >= DINO_IDLE_BLINK_DURATION) {
+        player.idleFrame = 0;
+        player.waitingFrame = 0;
+        player.animationTime = 0;
+        player.blinkTimer = 0;
+        player.nextBlinkDelay = randomBetween(DINO_IDLE_BLINK_INTERVAL_MIN, DINO_IDLE_BLINK_INTERVAL_MAX);
+      }
+
+      this.setPlayerHeight(player.standingHeight);
+      player.state = PLAYER_IDLE;
+      this.syncContainerIntroState();
       return;
     }
 
@@ -464,7 +608,7 @@ class Game {
 
     this.setPlayerHeight(player.standingHeight);
 
-    if (this.state === STATE_RUNNING) {
+    if (this.state === STATE_RUNNING && !this.isIntroPlaying) {
       player.animationTime += deltaTime;
       if (player.animationTime >= DINO_RUN_FRAME_DURATION) {
         player.animationTime = 0;
@@ -474,30 +618,36 @@ class Game {
       return;
     }
 
-    player.runFrame = 0;
+    player.runFrame = player.idleFrame;
     player.animationTime = 0;
     player.state = PLAYER_IDLE;
   }
 
   updateGround(deltaTime) {
-    this.groundOffset = (this.groundOffset + this.worldSpeed * deltaTime) % SPRITE_HORIZON_SEGMENT_WIDTH;
+    this.groundDistance += this.worldSpeed * deltaTime;
+    this.groundOffset = this.groundDistance % SPRITE_HORIZON_SEGMENT_WIDTH;
   }
 
   getAvailableObstacleDefinitions() {
-    return OBSTACLE_DEFINITIONS.filter((definition) => this.score >= definition.minScore);
+    return OBSTACLE_DEFINITIONS.filter((definition) => this.worldSpeedFrames >= definition.minSpeed);
   }
 
   createObstacle(definition) {
+    const y = Array.isArray(definition.yPositions)
+      ? pickRandom(definition.yPositions) ?? definition.y
+      : definition.y;
+
     return {
       id: `${definition.id}-${this.frameCount}`,
       definition,
       definitionId: definition.id,
       type: definition.type,
       x: this.width + OBSTACLE_SPAWN_OFFSET_X,
-      y: definition.y,
+      y,
       width: definition.width,
       height: definition.height,
-      hitbox: definition.hitbox,
+      hitboxes: definition.hitboxes,
+      gap: this.getNextSpawnGap(definition),
       passed: false,
       flapFrame: 0,
       animationTime: 0,
@@ -510,63 +660,52 @@ class Game {
       return null;
     }
 
-    const previous = this.obstacles[this.obstacles.length - 1] || null;
     const pool = available.filter((definition) => {
-      if (!previous) {
+      if (this.obstacleHistory.length < OBSTACLE_MAX_DUPLICATION) {
         return true;
       }
 
-      if (previous.definitionId === "bird-low" && definition.id === "bird-low") {
-        return false;
-      }
-
-      if (previous.type === "bird" && definition.type === "bird" && this.score < 420) {
-        return false;
-      }
-
-      return true;
+      const recent = this.obstacleHistory.slice(-OBSTACLE_MAX_DUPLICATION);
+      return recent.some((recentId) => recentId !== definition.id);
     });
 
     return pickRandom(pool.length > 0 ? pool : available);
   }
 
   getNextSpawnGap(definition) {
-    const speedFactor = (this.worldSpeed - WORLD_START_SPEED) / Math.max(1, WORLD_MAX_SPEED - WORLD_START_SPEED);
-    const gapReduction = OBSTACLE_GAP_SPEED_REDUCTION * clamp(speedFactor, 0, 1);
-    const minGap = Math.max(205, OBSTACLE_MIN_GAP - gapReduction);
-    const maxGap = Math.max(minGap + 60, OBSTACLE_MAX_GAP - gapReduction * 0.8);
-    let gap = minGap + Math.random() * (maxGap - minGap);
-
-    if (definition.type === "bird") {
-      gap += 54;
-    }
-
-    if (definition.id === "bird-low") {
-      gap += 48;
-    }
-
-    return gap;
+    const minGap = Math.round(
+      definition.width * this.worldSpeedFrames + definition.minGap * OBSTACLE_GAP_COEFFICIENT
+    );
+    const maxGap = Math.round(minGap * OBSTACLE_MAX_GAP_COEFFICIENT);
+    return randomBetween(minGap, Math.max(minGap + 1, maxGap));
   }
 
   updateObstacles(deltaTime) {
-    this.obstacleDistanceRemaining -= this.worldSpeed * deltaTime;
-
-    if (this.obstacleDistanceRemaining <= 0) {
-      const nextDefinition = this.chooseNextObstacle();
-      if (nextDefinition) {
-        this.obstacles.push(this.createObstacle(nextDefinition));
-        this.obstacleDistanceRemaining = this.getNextSpawnGap(nextDefinition);
-      }
-    }
-
     for (const obstacle of this.obstacles) {
-      obstacle.x -= this.worldSpeed * deltaTime;
+      obstacle.x -= (this.worldSpeed + (obstacle.definition.speedOffset || 0)) * deltaTime;
 
       if (obstacle.type === "bird") {
         obstacle.animationTime += deltaTime;
-        if (obstacle.animationTime >= 0.14) {
+        if (obstacle.animationTime >= (obstacle.definition.frameDuration || 0.14)) {
           obstacle.animationTime = 0;
           obstacle.flapFrame = obstacle.flapFrame === 0 ? 1 : 0;
+        }
+      }
+    }
+
+    if (this.runningTime >= OBSTACLE_CLEAR_TIME) {
+      const lastObstacle = this.obstacles[this.obstacles.length - 1] || null;
+      const readyForNext = !lastObstacle || lastObstacle.x + lastObstacle.width + lastObstacle.gap < this.width;
+
+      if (readyForNext) {
+        const nextDefinition = this.chooseNextObstacle();
+        if (nextDefinition) {
+          const obstacle = this.createObstacle(nextDefinition);
+          this.obstacles.push(obstacle);
+          this.obstacleHistory.push(obstacle.definitionId);
+          if (this.obstacleHistory.length > OBSTACLE_MAX_DUPLICATION) {
+            this.obstacleHistory.shift();
+          }
         }
       }
     }
@@ -574,33 +713,27 @@ class Game {
     this.obstacles = this.obstacles.filter((obstacle) => obstacle.x + obstacle.width > -8);
   }
 
-  getPlayerHitbox() {
+  getPlayerHitboxes() {
     const player = this.player;
     const preset = player.isDucking && player.isOnGround ? PLAYER_HITBOX.ducking : PLAYER_HITBOX.standing;
-    return {
-      x: player.x + preset.insetX,
-      y: player.y + preset.insetTop,
-      width: player.width - preset.insetX * 2,
-      height: player.height - preset.insetTop - preset.insetBottom,
-    };
+    const drawX = player.isDucking && player.isOnGround ? player.x + DINO_DUCK_DRAW_OFFSET_X : player.x;
+    const drawY = player.isDucking && player.isOnGround ? GROUND_Y - TREX_FRAME_HEIGHT : player.y;
+
+    return preset.map((box) => ({
+      x: drawX + box.x,
+      y: drawY + box.y,
+      width: box.width,
+      height: box.height,
+    }));
   }
 
-  getObstacleHitbox(obstacle) {
-    return {
-      x: obstacle.x + obstacle.hitbox.insetX,
-      y: obstacle.y + obstacle.hitbox.insetTop,
-      width: obstacle.width - obstacle.hitbox.insetX * 2,
-      height: obstacle.height - obstacle.hitbox.insetTop - obstacle.hitbox.insetBottom,
-    };
-  }
-
-  intersects(a, b) {
-    return (
-      a.x < b.x + b.width &&
-      a.x + a.width > b.x &&
-      a.y < b.y + b.height &&
-      a.y + a.height > b.y
-    );
+  getObstacleHitboxes(obstacle) {
+    return obstacle.hitboxes.map((box) => ({
+      x: obstacle.x + box.x,
+      y: obstacle.y + box.y,
+      width: box.width,
+      height: box.height,
+    }));
   }
 
   triggerGameOver() {
@@ -608,48 +741,101 @@ class Game {
     this.player.velocityY = 0;
     this.player.isJumping = false;
     this.player.isDucking = false;
+    this.player.isOnGround = this.player.y >= GROUND_Y - this.player.standingHeight;
     this.player.gravity = GRAVITY;
-    this.setPlayerHeight(this.player.standingHeight);
+    this.player.width = TREX_FRAME_WIDTH;
+    this.player.height = TREX_FRAME_HEIGHT;
     this.player.state = PLAYER_GAMEOVER;
     this.player.animationTime = 0;
     this.player.runFrame = 0;
+    this.gameOverTimer = 0;
+    if (this.score > this.highScore) {
+      this.setHighScore(this.score);
+    }
     this.showStatus("GAME OVER");
     this.playAudio("playHit");
   }
 
   checkCollisions() {
-    const playerHitbox = this.getPlayerHitbox();
+    const playerHitboxes = this.getPlayerHitboxes();
+    const playerOuterBox = trimCollisionBox({
+      x: this.player.x,
+      y: this.player.y,
+      width: this.player.width,
+      height: this.player.height,
+    }, COLLISION_BOX_TRIM);
 
     for (const obstacle of this.obstacles) {
-      if (this.intersects(playerHitbox, this.getObstacleHitbox(obstacle))) {
-        this.triggerGameOver();
-        return;
+      const obstacleOuterBox = trimCollisionBox({
+        x: obstacle.x,
+        y: obstacle.y,
+        width: obstacle.width,
+        height: obstacle.height,
+      }, COLLISION_BOX_TRIM);
+
+      if (!intersects(playerOuterBox, obstacleOuterBox)) {
+        continue;
+      }
+
+      const obstacleHitboxes = this.getObstacleHitboxes(obstacle);
+      for (const playerHitbox of playerHitboxes) {
+        for (const obstacleHitbox of obstacleHitboxes) {
+          if (intersects(playerHitbox, obstacleHitbox)) {
+            this.triggerGameOver();
+            return;
+          }
+        }
       }
     }
   }
 
-  updateScore(deltaTime) {
-    this.scoreAccumulator += SCORE_PER_SECOND * deltaTime;
-    const nextScore = Math.floor(this.scoreAccumulator);
+  updateDistance(deltaTime) {
+    this.distanceRan += this.worldSpeed * deltaTime;
+  }
+
+  updateScore() {
+    const nextScore = Math.max(0, Math.round(this.distanceRan * DISTANCE_SCORE_COEFFICIENT));
 
     if (nextScore <= this.score) {
       return;
     }
 
-    const previousHighScore = this.highScore;
     this.score = nextScore;
 
     if (Math.floor(this.score / SCORE_SOUND_MILESTONE) > Math.floor(this.lastScoreSoundScore / SCORE_SOUND_MILESTONE)) {
       this.lastScoreSoundScore = this.score;
+      this.scoreFlashActive = true;
+      this.scoreFlashTimer = 0;
+      this.scoreFlashIteration = 1;
       this.playAudio("playScore");
     }
+  }
 
-    if (this.score > this.highScore) {
-      this.setHighScore(this.score);
-      if (previousHighScore > 0 && previousHighScore < this.score) {
-        this.playAudio("playHighScore");
-      }
+  updateScoreFlash(deltaTime) {
+    if (!this.scoreFlashActive) {
+      return;
     }
+
+    this.scoreFlashTimer += deltaTime;
+    if (this.scoreFlashTimer < SCORE_FLASH_DURATION) {
+      return;
+    }
+
+    this.scoreFlashTimer = 0;
+    this.scoreFlashIteration += 1;
+
+    if (this.scoreFlashIteration >= SCORE_FLASH_ITERATIONS * 2) {
+      this.scoreFlashActive = false;
+      this.scoreFlashIteration = 0;
+    }
+  }
+
+  shouldRenderCurrentScore() {
+    if (!this.scoreFlashActive) {
+      return true;
+    }
+
+    return this.scoreFlashIteration % 2 === 0;
   }
 
   update(deltaTime) {
@@ -657,18 +843,20 @@ class Game {
     this.elapsed += deltaTime;
     this.frameCount++;
     this.updateStatus(deltaTime);
+    this.updateScoreFlash(deltaTime);
 
     if (this.state === STATE_GAMEOVER) {
-      this.updateTheme(deltaTime);
+      this.gameOverTimer += deltaTime;
+      this.applyThemeToDom();
       return;
     }
 
     if (this.state === STATE_RUNNING) {
-      this.updateDifficulty();
+      this.runningTime += deltaTime;
+      this.updateDifficulty(deltaTime);
       this.updateGround(deltaTime);
       this.updateBackground(deltaTime);
       this.updateObstacles(deltaTime);
-      this.updateTheme(deltaTime);
     }
 
     this.updatePlayer(deltaTime);
@@ -676,8 +864,10 @@ class Game {
     if (this.state === STATE_RUNNING) {
       this.checkCollisions();
       if (this.state === STATE_RUNNING) {
-        this.updateScore(deltaTime);
+        this.updateDistance(deltaTime);
+        this.updateScore();
       }
+      this.updateTheme();
     }
   }
 
@@ -685,7 +875,7 @@ class Game {
     const ctx = this.ctx;
 
     for (const cloud of this.background.clouds) {
-      this.drawTintedSprite(
+      this.drawSprite(
         SPRITE_CLOUD_X,
         SPRITE_CLOUD_Y,
         SPRITE_CLOUD_WIDTH,
@@ -693,8 +883,7 @@ class Game {
         Math.round(cloud.x),
         Math.round(cloud.y),
         SPRITE_CLOUD_WIDTH,
-        SPRITE_CLOUD_HEIGHT,
-        theme.spriteColor
+        SPRITE_CLOUD_HEIGHT
       );
     }
 
@@ -705,7 +894,7 @@ class Game {
     for (const star of this.background.stars) {
       const twinkle = Math.sin(this.elapsed * 2.3 + star.blinkOffset);
       ctx.globalAlpha = 0.35 + (twinkle + 1) * 0.18;
-      this.drawTintedSprite(
+      this.drawSprite(
         SPRITE_STAR_X,
         SPRITE_STAR_Y,
         SPRITE_STAR_WIDTH,
@@ -713,13 +902,12 @@ class Game {
         Math.round(star.x),
         Math.round(star.y),
         SPRITE_STAR_WIDTH,
-        SPRITE_STAR_HEIGHT,
-        theme.spriteColor
+        SPRITE_STAR_HEIGHT
       );
     }
     ctx.globalAlpha = 1;
 
-    this.drawTintedSprite(
+    this.drawSprite(
       SPRITE_MOON_X + SPRITE_MOON_WIDTH * this.background.moon.phase,
       SPRITE_MOON_Y,
       SPRITE_MOON_WIDTH,
@@ -727,136 +915,51 @@ class Game {
       Math.round(this.background.moon.x),
       Math.round(this.background.moon.y),
       SPRITE_MOON_WIDTH,
-      SPRITE_MOON_HEIGHT,
-      theme.spriteColor
+      SPRITE_MOON_HEIGHT
     );
   }
 
   renderGround(theme) {
     const segmentWidth = SPRITE_HORIZON_SEGMENT_WIDTH;
     const firstX = -Math.floor(this.groundOffset);
-    const secondX = firstX + segmentWidth;
+    const firstSegmentIndex = Math.floor(this.groundDistance / segmentWidth);
 
-    this.drawTintedSprite(
-      SPRITE_HORIZON_X,
-      SPRITE_HORIZON_Y,
-      segmentWidth,
-      SPRITE_HORIZON_HEIGHT,
-      firstX,
-      SPRITE_HORIZON_DRAW_Y,
-      segmentWidth,
-      SPRITE_HORIZON_HEIGHT,
-      theme.spriteColor
-    );
+    for (let segment = 0; segment < 3; segment += 1) {
+      const segmentIndex = firstSegmentIndex + segment;
+      const sourceX = SPRITE_HORIZON_X + (segmentIndex % 2 === 0 ? 0 : segmentWidth);
+      const destX = firstX + segment * segmentWidth;
 
-    this.drawTintedSprite(
-      SPRITE_HORIZON_X + segmentWidth,
-      SPRITE_HORIZON_Y,
-      segmentWidth,
-      SPRITE_HORIZON_HEIGHT,
-      secondX,
-      SPRITE_HORIZON_DRAW_Y,
-      segmentWidth,
-      SPRITE_HORIZON_HEIGHT,
-      theme.spriteColor
-    );
-
-    if (secondX < this.width) {
-      this.drawTintedSprite(
-        SPRITE_HORIZON_X,
+      this.drawSprite(
+        sourceX,
         SPRITE_HORIZON_Y,
         segmentWidth,
         SPRITE_HORIZON_HEIGHT,
-        secondX + segmentWidth,
+        destX,
         SPRITE_HORIZON_DRAW_Y,
         segmentWidth,
-        SPRITE_HORIZON_HEIGHT,
-        theme.spriteColor
+        SPRITE_HORIZON_HEIGHT
       );
     }
   }
 
-  getTintedSprite(sourceX, sourceY, sourceWidth, sourceHeight, color) {
-    if (!this.spriteImage || !this.spriteImage.complete || this.spriteImage.naturalWidth === 0) {
-      return null;
-    }
-
-    const cacheKey = `${sourceX},${sourceY},${sourceWidth},${sourceHeight},${color}`;
-    const cached = this.spriteTintCache.get(cacheKey);
-    if (cached) {
-      return cached;
-    }
-
-    const spriteCanvas = document.createElement("canvas");
-    spriteCanvas.width = sourceWidth;
-    spriteCanvas.height = sourceHeight;
-
-    const spriteCtx = spriteCanvas.getContext("2d");
-    if (!spriteCtx) {
-      return null;
-    }
-
-    spriteCtx.imageSmoothingEnabled = false;
-    spriteCtx.drawImage(
-      this.spriteImage,
-      sourceX,
-      sourceY,
-      sourceWidth,
-      sourceHeight,
-      0,
-      0,
-      sourceWidth,
-      sourceHeight
-    );
-
-    const spriteData = spriteCtx.getImageData(0, 0, sourceWidth, sourceHeight);
-    const pixels = spriteData.data;
-
-    for (let index = 0; index < pixels.length; index += 4) {
-      const red = pixels[index];
-      const green = pixels[index + 1];
-      const blue = pixels[index + 2];
-      const alpha = pixels[index + 3];
-
-      if (alpha === 0 || (red < 10 && green < 10 && blue < 10)) {
-        pixels[index + 3] = 0;
-      } else {
-        pixels[index] = 255;
-        pixels[index + 1] = 255;
-        pixels[index + 2] = 255;
-        pixels[index + 3] = 255;
-      }
-    }
-
-    spriteCtx.clearRect(0, 0, sourceWidth, sourceHeight);
-    spriteCtx.putImageData(spriteData, 0, 0);
-    spriteCtx.globalCompositeOperation = "source-in";
-    spriteCtx.fillStyle = color;
-    spriteCtx.fillRect(0, 0, sourceWidth, sourceHeight);
-
-    if (this.spriteTintCache.size >= SPRITE_TINT_CACHE_LIMIT) {
-      this.spriteTintCache.delete(this.spriteTintCache.keys().next().value);
-    }
-    this.spriteTintCache.set(cacheKey, spriteCanvas);
-
-    return spriteCanvas;
-  }
-
-  drawTintedSprite(sourceX, sourceY, sourceWidth, sourceHeight, destX, destY, destWidth, destHeight, color) {
+  drawSprite(sourceX, sourceY, sourceWidth, sourceHeight, destX, destY, destWidth, destHeight, color = null) {
     const ctx = this.ctx;
 
-    const tintedSprite = this.getTintedSprite(sourceX, sourceY, sourceWidth, sourceHeight, color);
-    if (!tintedSprite) {
-      ctx.fillStyle = color;
+    if (!this.spriteImage || !this.spriteImage.complete || this.spriteImage.naturalWidth === 0) {
+      ctx.fillStyle = color || "#535353";
       ctx.fillRect(destX, destY, destWidth, destHeight);
       return;
     }
 
     ctx.imageSmoothingEnabled = false;
+    ctx.save();
+    if (color) {
+      ctx.fillStyle = color;
+    }
     ctx.drawImage(
-      tintedSprite,
-      0,
-      0,
+      this.spriteImage,
+      sourceX,
+      sourceY,
       sourceWidth,
       sourceHeight,
       destX,
@@ -864,6 +967,7 @@ class Game {
       destWidth,
       destHeight
     );
+    ctx.restore();
   }
 
   renderObstacleSprite(obstacle, color) {
@@ -871,7 +975,7 @@ class Game {
       ? obstacle.definition.frameGap * obstacle.flapFrame
       : 0;
 
-    this.drawTintedSprite(
+    this.drawSprite(
       obstacle.definition.spriteX + frameOffset,
       obstacle.definition.spriteY,
       obstacle.definition.sourceWidth,
@@ -893,7 +997,8 @@ class Game {
   renderPlayer(theme) {
     const ctx = this.ctx;
     const player = this.player;
-    const x = player.x;
+    const introProgress = this.isIntroPlaying ? clamp(this.introTimer / INTRO_DURATION, 0, 1) : 1;
+    const x = player.x - Math.round((1 - introProgress) * INTRO_RUNNER_OFFSET);
     const y = player.y;
 
     if (!this.spriteImage || !this.spriteImage.complete) {
@@ -906,50 +1011,69 @@ class Game {
     let sourceWidth = TREX_FRAME_WIDTH;
     let sourceHeight = TREX_FRAME_HEIGHT;
     let drawWidth = player.width;
+    let drawHeight = player.height;
+    let drawY = y;
 
     if (player.state === PLAYER_JUMPING) {
       frameOffsetX = TREX_JUMP_X;
+    } else if (player.state === PLAYER_GAMEOVER) {
+      frameOffsetX = TREX_CRASHED_X;
+      drawWidth = TREX_FRAME_WIDTH;
+      drawHeight = TREX_FRAME_HEIGHT;
     } else if (player.state === PLAYER_DUCKING) {
       frameOffsetX = player.duckFrame === 0 ? TREX_DUCK_1_X : TREX_DUCK_2_X;
       sourceWidth = TREX_DUCK_FRAME_WIDTH;
       sourceHeight = TREX_DUCK_FRAME_HEIGHT;
-      drawWidth = 59;
+      drawWidth = TREX_DUCK_FRAME_WIDTH;
+      drawHeight = TREX_FRAME_HEIGHT;
+      drawY = GROUND_Y - TREX_FRAME_HEIGHT;
     } else if (player.state === PLAYER_RUNNING) {
       frameOffsetX = player.runFrame === 0 ? TREX_RUN_1_X : TREX_RUN_2_X;
+    } else if (player.state === PLAYER_IDLE) {
+      frameOffsetX = player.waitingFrame === 1 ? TREX_JUMP_X : TREX_IDLE_X;
     }
 
-    this.drawTintedSprite(
+    const drawX = player.state === PLAYER_DUCKING
+      ? x + DINO_DUCK_DRAW_OFFSET_X
+      : x;
+
+    this.drawSprite(
       TREX_SPRITE_X + frameOffsetX,
       TREX_SPRITE_Y,
       sourceWidth,
       sourceHeight,
-      x,
-      y,
+      drawX,
+      drawY,
       drawWidth,
-      player.height,
-      theme.spriteColor
+      drawHeight
     );
   }
 
   renderScore(theme) {
+    if (this.state === STATE_IDLE) {
+      return;
+    }
+
     const scoreText = this.formatScore(this.score);
     const highScoreText = this.highScore > 0 ? `HI ${this.formatScore(this.highScore)}` : "";
     const digitGap = 1;
-    const drawY = 12;
-    let drawX = this.width - 16 - scoreText.length * (SPRITE_DIGIT_WIDTH + digitGap);
+    const drawY = 5;
+    let drawX = this.width - 10 - scoreText.length * (SPRITE_DIGIT_WIDTH + digitGap);
 
-    for (const character of scoreText) {
-      this.drawScoreGlyph(character, drawX, drawY, theme.spriteColor);
-      drawX += SPRITE_DIGIT_WIDTH + digitGap;
+    if (this.shouldRenderCurrentScore()) {
+      for (const character of scoreText) {
+        this.drawScoreGlyph(character, drawX, drawY, theme.spriteColor);
+        drawX += SPRITE_DIGIT_WIDTH + digitGap;
+      }
     }
 
     if (highScoreText) {
-      drawX = this.width - 164 - highScoreText.length * (SPRITE_DIGIT_WIDTH + digitGap);
+      let hiDrawX = this.width - 10 - (scoreText.length + highScoreText.length + 2) * (SPRITE_DIGIT_WIDTH + digitGap);
       for (const character of highScoreText) {
         if (character !== " ") {
-          this.drawScoreGlyph(character, drawX, drawY, theme.spriteColor);
+          this.drawScoreGlyph(character, hiDrawX, drawY, theme.spriteColor);
         }
-        drawX += SPRITE_DIGIT_WIDTH + digitGap;
+        hiDrawX += SPRITE_DIGIT_WIDTH + digitGap;
       }
     }
   }
@@ -960,7 +1084,7 @@ class Game {
       return;
     }
 
-    this.drawTintedSprite(
+    this.drawSprite(
       SPRITE_DIGITS_X + glyphIndex * SPRITE_DIGIT_WIDTH,
       SPRITE_DIGITS_Y,
       SPRITE_DIGIT_WIDTH,
@@ -978,18 +1102,28 @@ class Game {
       return;
     }
 
-    this.drawTintedSprite(
+    this.drawSprite(
       SPRITE_GAME_OVER_X,
       SPRITE_GAME_OVER_Y,
       SPRITE_GAME_OVER_WIDTH,
       SPRITE_GAME_OVER_HEIGHT,
       Math.round(this.width / 2 - SPRITE_GAME_OVER_WIDTH / 2),
-      40,
+      SPRITE_GAME_OVER_DRAW_Y,
       SPRITE_GAME_OVER_WIDTH,
-      SPRITE_GAME_OVER_HEIGHT,
-      theme.spriteColor
+      SPRITE_GAME_OVER_HEIGHT
     );
-    this.drawTintedSprite(2, 2, 36, 32, Math.round(this.width / 2 - 18), 70, 36, 32, theme.spriteColor);
+    if (this.canRestart()) {
+      this.drawSprite(
+        SPRITE_RESTART_X,
+        SPRITE_RESTART_Y,
+        SPRITE_RESTART_WIDTH,
+        SPRITE_RESTART_HEIGHT,
+        Math.round(this.width / 2 - SPRITE_RESTART_WIDTH / 2),
+        SPRITE_RESTART_DRAW_Y,
+        SPRITE_RESTART_WIDTH,
+        SPRITE_RESTART_HEIGHT
+      );
+    }
   }
 
   renderDebug(theme) {
@@ -998,13 +1132,16 @@ class Game {
     }
 
     const ctx = this.ctx;
-    const playerHitbox = this.getPlayerHitbox();
+    const playerHitboxes = this.getPlayerHitboxes();
 
     ctx.strokeStyle = theme.accentColor;
-    ctx.strokeRect(playerHitbox.x, playerHitbox.y, playerHitbox.width, playerHitbox.height);
+    for (const playerHitbox of playerHitboxes) {
+      ctx.strokeRect(playerHitbox.x, playerHitbox.y, playerHitbox.width, playerHitbox.height);
+    }
     for (const obstacle of this.obstacles) {
-      const hitbox = this.getObstacleHitbox(obstacle);
-      ctx.strokeRect(hitbox.x, hitbox.y, hitbox.width, hitbox.height);
+      for (const hitbox of this.getObstacleHitboxes(obstacle)) {
+        ctx.strokeRect(hitbox.x, hitbox.y, hitbox.width, hitbox.height);
+      }
     }
 
     ctx.fillStyle = theme.textColor;

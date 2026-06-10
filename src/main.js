@@ -72,12 +72,26 @@ function releaseJump() {
   game.handleJumpRelease();
 }
 
+function triggerRestart() {
+  unlockAudio();
+  game.handleRestartInput();
+}
+
+function triggerImmediateRestart() {
+  unlockAudio();
+  game.handleRestartInput({ immediate: true });
+}
+
 function isDuckKey(code) {
   return code === "ArrowDown" || code === "KeyS";
 }
 
 function isJumpKey(code) {
   return code === "Space" || code === "ArrowUp" || code === "KeyW";
+}
+
+function isRestartKey(code) {
+  return code === "Enter";
 }
 
 function handleKeyDown(event) {
@@ -91,6 +105,10 @@ function handleKeyDown(event) {
     return;
   }
 
+  if (isRestartKey(event.code)) {
+    event.preventDefault();
+  }
+
   if (isDuckKey(event.code)) {
     event.preventDefault();
     startDuck();
@@ -99,7 +117,23 @@ function handleKeyDown(event) {
 
 function handleKeyUp(event) {
   if (isJumpKey(event.code)) {
+    event.preventDefault();
     releaseJump();
+
+    if (game.canRestart()) {
+      triggerRestart();
+    }
+
+    return;
+  }
+
+  if (isRestartKey(event.code)) {
+    event.preventDefault();
+    if (game.canRestart({ immediate: true })) {
+      triggerImmediateRestart();
+    }
+
+    return;
   }
 
   if (isDuckKey(event.code)) {
@@ -135,6 +169,10 @@ function handlePointerDown(event) {
 function handlePointerUp() {
   releaseJump();
   endDuck();
+
+  if (game.canRestart({ immediate: true })) {
+    triggerImmediateRestart();
+  }
 }
 
 document.addEventListener("visibilitychange", handleVisibilityChange);

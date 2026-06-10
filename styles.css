@@ -1,5 +1,11 @@
 :root {
   --dino-bg: #ffffff;
+  --bg-color: #ffffff;
+  --text-color: #535353;
+  --page-filter: invert(0);
+  --stage-width: 600px;
+  --stage-aspect-ratio: 600 / 150;
+  --canvas-shadow: none;
 }
 
 *, *::before, *::after {
@@ -15,34 +21,55 @@ body {
 body {
   min-height: 100vh;
   overflow: hidden;
-  background: var(--dino-bg);
-  color: #535353;
-  font-family: "Courier New", Courier, monospace;
+  background: var(--bg-color);
+  color: var(--text-color);
+  font-family: Arial, sans-serif;
+  transition: background-color 240ms ease, color 240ms ease, filter 240ms ease;
+}
+
+html.offline {
+  background: var(--bg-color);
+}
+
+html.offline.inverted {
+  filter: var(--page-filter);
 }
 
 #app {
   width: 100%;
-  padding-top: 150px;
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: clamp(36px, 12vh, 108px);
 }
 
 #game-container {
   position: relative;
-  width: min(100%, 600px);
+  width: min(100%, var(--stage-width));
   margin: 0 auto;
   overflow: hidden;
   touch-action: none;
   user-select: none;
+  box-shadow: var(--canvas-shadow);
 }
 
 #game-canvas {
   display: block;
   width: 100%;
   height: auto;
-  aspect-ratio: 600 / 150;
+  aspect-ratio: var(--stage-aspect-ratio);
+  image-rendering: crisp-edges;
 }
 
-@media (max-width: 720px) {
+@media (max-width: 600px) {
   #app {
-    padding-top: 96px;
+    padding-top: clamp(18px, 8vh, 56px);
+  }
+}
+
+@media (max-height: 200px) {
+  #app {
+    padding-top: 8px;
   }
 }
